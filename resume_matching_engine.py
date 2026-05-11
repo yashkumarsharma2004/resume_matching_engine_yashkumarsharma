@@ -48,6 +48,9 @@ SKILL_ALIASES = {
     "ui/ux": "ui_ux", "ui ux": "ui_ux", "figma": "figma",
 }
 
+# Precompute multi-word keys once, longest first
+MULTI_KEYS = sorted([k for k in SKILL_ALIASES if " " in k], key=len, reverse=True)
+
 # ─── RESUME DATASET ───────────────────────────────────────────────────────────
 RESUMES = [
     ("Arjun Sharma",    "Pyhton, MachineLearning, SQL, pandas, numpy, Deep-learning"),
@@ -62,7 +65,7 @@ RESUMES = [
     ("Meera Iyer",      "python, R, statistics, ML, regression, clustering, Power-BI"),
 ]
 
-# ─── JOB DESCRIPTIONS ─────────────────────────────────────────────────────────
+# ─── JOB DESCRIPTIONS ────────────────────────────────────────────────────────
 JDS = [
     ("JD-1", "Kakao (ML Engineer)",
      "Python, Machine Learning, Deep Learning, TensorFlow, PyTorch, SQL, Data Visualization",
@@ -78,74 +81,54 @@ JDS = [
 
 # ─── STEP 1 & 2: NORMALIZE + DEDUPLICATE ─────────────────────────────────────
 def normalize_skills(raw):
-    """Split on commas, lowercase, apply alias map (multi-word first), deduplicate."""
     tokens = [t.strip() for t in raw.lower().split(",")]
-    result = []
-    multi_keys = sorted([k for k in SKILL_ALIASES if " " in k], key=len, reverse=True)
+    seen, result = set(), []
     for token in tokens:
         matched = None
-        for mk in multi_keys:          # try multi-word phrases first
-            if mk in token:
+        for mk in MULTI_KEYS:          # exact multi-word match first
+            if token == mk:
                 matched = SKILL_ALIASES[mk]
                 break
-        if matched is None and token in SKILL_ALIASES:
-            matched = SKILL_ALIASES[token]
-        if matched is not None:
+        if matched is None:
+            matched = SKILL_ALIASES.get(token)
+        if matched is not None and matched not in seen:
+            seen.add(matched)
             result.append(matched)
-    # deduplicate preserving order
-    seen, deduped = set(), []
-    for s in result:
-        if s not in seen:
-            seen.add(s)
-            deduped.append(s)
-    return deduped
+    return result
 
 
 # ─── STEP 3: BUILD VOCABULARY ─────────────────────────────────────────────────
 normalized = [(name, normalize_skills(raw)) for name, raw in RESUMES]
 
-all_skills = set()
-for _, skills in normalized:
-    all_skills.update(skills)
-vocab = sorted(all_skills)          # alphabetical order
-word2idx = {w: i for i, w in enumerate(vocab)}
-V = len(vocab)
+vocab     = sorted({s for _, skills in normalized for s in skills})
+word2idx  = {w: i for i, w in enumerate(vocab)}
+V         = len(vocab)
 
 
-# ─── STEP 4: COMPUTE TF-IDF ───────────────────────────────────────────────────
+# ─── STEP 4: COMPUTE TF-IDF ──────────────────────────────────────────────────
 N_DOCS = 10
 
-# Document frequency
-df = {skill: 0 for skill in vocab}
-for _, skills in normalized:
-    for s in skills:
-        df[s] += 1
+df  = {s: sum(1 for _, skills in normalized if s in skills) for s in vocab}
+idf = {s: math.log(N_DOCS / df[s]) for s in vocab}   # ln(10/df), no smoothing
 
-# IDF: ln(N / df), no smoothing
-idf = {skill: math.log(N_DOCS / df[skill]) for skill in vocab}
-
-# Resume TF-IDF vectors  (TF = 1/N after deduplication)
-resume_vectors = []
-for name, skills in normalized:
-    N = len(skills)
-    vec = [0.0] * V
+def tfidf_vector(skills):
+    N, vec = len(skills), [0.0] * V
     for s in skills:
-        vec[word2idx[s]] = (1.0 / N) * idf[s]
-    resume_vectors.append((name, vec))
+        vec[word2idx[s]] = (1.0 / N) * idf[s]        # TF = 1/N after dedup
+    return vec
+
+resume_vectors = [(name, tfidf_vector(skills)) for name, skills in normalized]
 
 
 # ─── STEP 5: BUILD JD BINARY VECTORS ─────────────────────────────────────────
-def build_jd_vector(req_str, pref_str):
-    skills = normalize_skills(req_str + ", " + pref_str)
+def jd_binary_vector(req_str, pref_str):
     vec = [0] * V
-    for s in skills:
+    for s in normalize_skills(req_str + ", " + pref_str):
         if s in word2idx:
             vec[word2idx[s]] = 1
     return vec
 
-
-jd_vectors = [(jd_id, jd_name,
-               build_jd_vector(req, pref))
+jd_vectors = [(jd_id, jd_name, jd_binary_vector(req, pref))
               for jd_id, jd_name, req, pref in JDS]
 
 
@@ -156,12 +139,11 @@ def cosine(a, b):
     norm_b = math.sqrt(sum(x * x for x in b))
     return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
-
-print("=" * 50)
 for jd_id, jd_name, jd_vec in jd_vectors:
-    scores = [(name, cosine(rvec, jd_vec)) for name, rvec in resume_vectors]
-    scores.sort(key=lambda x: (-x[1], x[0]))   # desc score, asc name for ties
-    top3 = scores[:3]
+    scores = sorted(
+        [(name, cosine(rvec, jd_vec)) for name, rvec in resume_vectors],
+        key=lambda x: (-x[1], x[0])       # desc score, asc name for ties
+    )
     print(f"{jd_id} — {jd_name}")
-    print(", ".join(f"{n}({s:.2f})" for n, s in top3))
+    print(", ".join(f"{n}({s:.2f})" for n, s in scores[:3]))
     print()
