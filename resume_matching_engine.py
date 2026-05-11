@@ -1,0 +1,167 @@
+import math
+
+# ─── SKILL ALIASES (exact as provided) ───────────────────────────────────────
+SKILL_ALIASES = {
+    "python": "python", "pyhton": "python",
+    "java": "java",
+    "javascript": "javascript", "javascrpit": "javascript", "js": "javascript",
+    "typescript": "typescript", "typescrpit": "typescript",
+    "c++": "cpp", "cpp": "cpp",
+    "r": "r",
+    "kotlin": "kotlin",
+    "machinelearning": "machine_learning", "machine learning": "machine_learning",
+    "ml": "machine_learning", "sklearn": "machine_learning",
+    "deeplearning": "deep_learning", "deep learning": "deep_learning",
+    "deep-learning": "deep_learning",
+    "tensorflow": "tensorflow", "pytorch": "pytorch", "keras": "keras",
+    "nlp": "nlp", "bert": "bert", "xgboost": "xgboost",
+    "feature engineering": "feature_engineering",
+    "statistics": "statistics", "stats": "statistics",
+    "regression": "regression", "clustering": "clustering",
+    "data-viz": "data_visualization", "data visualization": "data_visualization",
+    "data viz": "data_visualization", "matplotlib": "data_visualization",
+    "tableau": "data_visualization", "power-bi": "data_visualization",
+    "power bi": "data_visualization", "powerbi": "data_visualization",
+    "pandas": "pandas", "numpy": "numpy",
+    "react": "react", "reacts": "react", "reactjs": "react",
+    "vue": "vue", "vue.js": "vue", "vuejs": "vue",
+    "redux": "redux", "tailwind": "tailwind",
+    "html/css": "html_css", "html css": "html_css",
+    "html": "html_css", "css": "html_css",
+    "jest": "jest", "graphql": "graphql",
+    "node.js": "nodejs", "nodejs": "nodejs", "node js": "nodejs",
+    "flask": "flask",
+    "spring boot": "spring_boot", "springboot": "spring_boot",
+    "rest api": "rest_api", "rest": "rest_api", "restapi": "rest_api",
+    "microservices": "microservices",
+    "sql": "sql", "mysql": "mysql", "mysq": "mysql",
+    "postgresql": "postgresql", "postgres": "postgresql",
+    "mongodb": "mongodb", "redis": "redis",
+    "docker": "docker",
+    "kubernetes": "kubernetes", "kubernates": "kubernetes", "k8s": "kubernetes",
+    "ci/cd": "ci_cd", "cicd": "ci_cd", "ci cd": "ci_cd",
+    "aws": "aws",
+    "android": "android", "firebase": "firebase",
+    "algorithms": "algorithms", "algoritms": "algorithms",
+    "data structure": "data_structures", "data structures": "data_structures",
+    "competitive programming": "competitive_programming",
+    "ui/ux": "ui_ux", "ui ux": "ui_ux", "figma": "figma",
+}
+
+# ─── RESUME DATASET ───────────────────────────────────────────────────────────
+RESUMES = [
+    ("Arjun Sharma",    "Pyhton, MachineLearning, SQL, pandas, numpy, Deep-learning"),
+    ("Priya Nair",      "JavaScrpit, Reacts, Node.JS, MongoDb, REST api, HTML/CSS"),
+    ("Rahul Gupta",     "Java, Spring Boot, MySql, Microservices, Docker, kubernates"),
+    ("Sneha Patel",     "Python, TensorFlow, Keras, NLP, BERT, data-viz, matplotlib"),
+    ("Vikram Singh",    "C++, Algoritms, Data Structure, competitive programming, python"),
+    ("Ananya Krishnan", "javascript, vue.js, python, flask, PostgreSQL, AWS, CI/CD"),
+    ("Karan Mehta",     "Python, Sklearn, XGboost, feature engineering, SQL, tableau"),
+    ("Deepika Rao",     "Java, Android, Kotlin, Firebase, REST, UI/UX, figma"),
+    ("Aditya Kumar",    "Reactjs, TypeScrpit, GraphQL, redux, tailwind, nodejs, jest"),
+    ("Meera Iyer",      "python, R, statistics, ML, regression, clustering, Power-BI"),
+]
+
+# ─── JOB DESCRIPTIONS ─────────────────────────────────────────────────────────
+JDS = [
+    ("JD-1", "Kakao (ML Engineer)",
+     "Python, Machine Learning, Deep Learning, TensorFlow, PyTorch, SQL, Data Visualization",
+     "NLP, BERT, Feature Engineering, Statistics"),
+    ("JD-2", "Naver (Backend Engineer)",
+     "Java, Spring Boot, MySQL, PostgreSQL, Microservices, Docker, Kubernetes",
+     "REST API, CI/CD, Redis"),
+    ("JD-3", "Line (Frontend Engineer)",
+     "JavaScript, React, Vue, TypeScript, REST API, HTML/CSS",
+     "Node.js, GraphQL, Redux, Jest, AWS"),
+]
+
+
+# ─── STEP 1 & 2: NORMALIZE + DEDUPLICATE ─────────────────────────────────────
+def normalize_skills(raw):
+    """Split on commas, lowercase, apply alias map (multi-word first), deduplicate."""
+    tokens = [t.strip() for t in raw.lower().split(",")]
+    result = []
+    multi_keys = sorted([k for k in SKILL_ALIASES if " " in k], key=len, reverse=True)
+    for token in tokens:
+        matched = None
+        for mk in multi_keys:          # try multi-word phrases first
+            if mk in token:
+                matched = SKILL_ALIASES[mk]
+                break
+        if matched is None and token in SKILL_ALIASES:
+            matched = SKILL_ALIASES[token]
+        if matched is not None:
+            result.append(matched)
+    # deduplicate preserving order
+    seen, deduped = set(), []
+    for s in result:
+        if s not in seen:
+            seen.add(s)
+            deduped.append(s)
+    return deduped
+
+
+# ─── STEP 3: BUILD VOCABULARY ─────────────────────────────────────────────────
+normalized = [(name, normalize_skills(raw)) for name, raw in RESUMES]
+
+all_skills = set()
+for _, skills in normalized:
+    all_skills.update(skills)
+vocab = sorted(all_skills)          # alphabetical order
+word2idx = {w: i for i, w in enumerate(vocab)}
+V = len(vocab)
+
+
+# ─── STEP 4: COMPUTE TF-IDF ───────────────────────────────────────────────────
+N_DOCS = 10
+
+# Document frequency
+df = {skill: 0 for skill in vocab}
+for _, skills in normalized:
+    for s in skills:
+        df[s] += 1
+
+# IDF: ln(N / df), no smoothing
+idf = {skill: math.log(N_DOCS / df[skill]) for skill in vocab}
+
+# Resume TF-IDF vectors  (TF = 1/N after deduplication)
+resume_vectors = []
+for name, skills in normalized:
+    N = len(skills)
+    vec = [0.0] * V
+    for s in skills:
+        vec[word2idx[s]] = (1.0 / N) * idf[s]
+    resume_vectors.append((name, vec))
+
+
+# ─── STEP 5: BUILD JD BINARY VECTORS ─────────────────────────────────────────
+def build_jd_vector(req_str, pref_str):
+    skills = normalize_skills(req_str + ", " + pref_str)
+    vec = [0] * V
+    for s in skills:
+        if s in word2idx:
+            vec[word2idx[s]] = 1
+    return vec
+
+
+jd_vectors = [(jd_id, jd_name,
+               build_jd_vector(req, pref))
+              for jd_id, jd_name, req, pref in JDS]
+
+
+# ─── STEP 6: COSINE SIMILARITY & RANKING ─────────────────────────────────────
+def cosine(a, b):
+    dot    = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+
+print("=" * 50)
+for jd_id, jd_name, jd_vec in jd_vectors:
+    scores = [(name, cosine(rvec, jd_vec)) for name, rvec in resume_vectors]
+    scores.sort(key=lambda x: (-x[1], x[0]))   # desc score, asc name for ties
+    top3 = scores[:3]
+    print(f"{jd_id} — {jd_name}")
+    print(", ".join(f"{n}({s:.2f})" for n, s in top3))
+    print()
